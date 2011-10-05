@@ -760,7 +760,6 @@ device_register(device_t dev, void *aux)
 #if NACPICA > 0
 			pci_decompose_tag(paa->pa_pc, paa->pa_tag, &b, &d, &f);
 			gpc = acpidisp_md_out_find(b, d, f);
-			aprint_debug("%s: gpc=0x%p\n", __func__, gpc);
 			if (gpc != NULL)
 				prop_dictionary_set_uint64(dict,
 				    "brightness_callback", (uint64_t)(vaddr_t)gpc);
