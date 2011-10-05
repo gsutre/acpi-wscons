@@ -261,6 +261,7 @@ struct acpidisp_acpivga_attach_args {
  * Invariants (after initialization):
  *
  *	(bc_level != NULL) && (bc_level_count > 0)
+ *	bc_level[bc_level_count - 1] > 0
  */
 struct acpidisp_brctl {
 	uint8_t		*bc_level;		/* Array of levels */
@@ -1657,7 +1658,7 @@ acpidisp_init_brctl(const struct acpidisp_out_softc *osc)
 		count++;
 	}
 
-	if (count == 0) {
+	if (count == 0 || bc->bc_level[count-1] == 0) {
 		rv = AE_BAD_DATA;
 		goto fail;
 	}
