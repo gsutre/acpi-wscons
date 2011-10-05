@@ -82,6 +82,8 @@ __KERNEL_RCSID(0, "$NetBSD: acpi_display.c,v 1.9 2011/02/16 09:05:12 jruoho Exp 
 #include <dev/acpi/acpireg.h>
 #include <dev/acpi/acpivar.h>
 
+#include <machine/acpi_display_md.h>
+
 #define _COMPONENT		ACPI_DISPLAY_COMPONENT
 ACPI_MODULE_NAME		("acpi_display")
 
@@ -245,6 +247,7 @@ struct acpidisp_vga_softc {
  */
 struct acpidisp_acpivga_attach_args {
 	struct acpi_devnode	*aa_node;	/* ACPI device node */
+	struct acpi_pci_info	*aa_pciinfo;	/* PCI info */
 	kmutex_t		*aa_mtx;	/* Shared mutex */
 };
 
@@ -354,6 +357,10 @@ static int	acpidisp_out_sysctl_status(SYSCTLFN_PROTO);
 static int	acpidisp_out_sysctl_state(SYSCTLFN_PROTO);
 #endif
 static int	acpidisp_out_sysctl_brightness(SYSCTLFN_PROTO);
+
+static int	acpidisp_gpc_get_brightness(void *, int *);
+static int	acpidisp_gpc_set_brightness(void *, int);
+static int	acpidisp_gpc_upd_brightness(void *, int);
 
 static struct acpidisp_odinfo *
 		acpidisp_init_odinfo(const struct acpidisp_vga_softc *);
@@ -571,6 +578,7 @@ acpidisp_vga_scan_outdevs(struct acpidisp_vga_softc *asc)
 			continue;
 
 		aa.aa_node = ad;
+		aa.aa_pciinfo = asc->sc_node->ad_pciinfo;
 		aa.aa_mtx = &asc->sc_mtx;
 
 		ad->ad_device = config_found_ia(asc->sc_dev,
@@ -626,6 +634,7 @@ acpidisp_out_attach(device_t parent, device_t self, void *aux)
 	struct acpidisp_acpivga_attach_args *aa = aux;
 	struct acpi_devnode *ad = aa->aa_node;
 	struct acpidisp_brctl *bc;
+	struct acpi_pci_info *ap;
 
 	aprint_naive("\n");
 	aprint_normal(": ACPI Display Output Device\n");
@@ -657,6 +666,15 @@ acpidisp_out_attach(device_t parent, device_t self, void *aux)
 		} else {
 			acpidisp_print_brctl(self, osc->sc_brctl);
 		}
+
+		/*
+		 * Register brightness callbacks to our machine-dependent manager,
+		 * so that console drivers may use them.
+		 */
+		ap = aa->aa_pciinfo;
+		(void)acpidisp_md_out_register(self, ap->ap_bus, ap->ap_device,
+		    ap->ap_function, acpidisp_gpc_get_brightness,
+		    acpidisp_gpc_set_brightness, acpidisp_gpc_upd_brightness);
 	}
 
 	/* Install ACPI notify handler. */
@@ -1379,6 +1397,109 @@ acpidisp_out_sysctl_brightness(SYSCTLFN_ARGS)
 		level = up;
 
 	mutex_enter(osc->sc_mtx);
+	bc->bc_current = level;
+	error = acpidisp_set_brightness(osc, bc->bc_current);
+	mutex_exit(osc->sc_mtx);
+
+	return error;
+}
+
+/*
+ * Callbacks for genfb(4) brightness control.
+ */
+
+static inline int
+acpidisp_fit_level_to_gpc(const struct acpidisp_brctl *bc, uint8_t level)
+{
+
+	return (level * 255) / bc->bc_level[bc->bc_level_count - 1];
+}
+
+static inline uint8_t
+acpidisp_fit_level_from_gpc(const struct acpidisp_brctl *bc, int level)
+{
+
+	return (level * bc->bc_level[bc->bc_level_count - 1]) / 255;
+}
+
+static int
+acpidisp_gpc_get_brightness(void *cookie, int *valp)
+{
+	struct acpidisp_out_softc *osc = device_private(cookie);
+	struct acpidisp_brctl *bc = osc->sc_brctl;
+
+	KASSERT(bc != NULL);
+
+	mutex_enter(osc->sc_mtx);
+	(void)acpidisp_get_brightness(osc, &bc->bc_current);
+	*valp = acpidisp_fit_level_to_gpc(bc, bc->bc_current);
+	mutex_exit(osc->sc_mtx);
+
+	return 0;
+}
+
+static int
+acpidisp_gpc_set_brightness(void *cookie, int val)
+{
+	struct acpidisp_out_softc *osc = device_private(cookie);
+	struct acpidisp_brctl *bc = osc->sc_brctl;
+	int error;
+	uint8_t lo, up, level;
+
+	KASSERT(bc != NULL);
+	KASSERT(val >= 0);
+
+	acpidisp_array_search(bc->bc_level, bc->bc_level_count,
+	    acpidisp_fit_level_from_gpc(bc, val), &lo, &up);
+	if ((lo != up) && (val - lo) < (up - val))
+		level = lo;
+	else
+		level = up;
+
+	mutex_enter(osc->sc_mtx);
+	bc->bc_current = level;
+	error = acpidisp_set_brightness(osc, bc->bc_current);
+	mutex_exit(osc->sc_mtx);
+
+	return error;
+}
+
+static int
+acpidisp_gpc_upd_brightness(void *cookie, int delta)
+{
+	struct acpidisp_out_softc *osc = device_private(cookie);
+	struct acpidisp_brctl *bc = osc->sc_brctl;
+	int val, error;
+	uint8_t lo, up, level;
+
+	KASSERT(bc != NULL);
+	KASSERT(delta != 0);
+
+	mutex_enter(osc->sc_mtx);
+	(void)acpidisp_get_brightness(osc, &bc->bc_current);
+	val = MAX(0, acpidisp_fit_level_to_gpc(bc, bc->bc_current) + delta);
+
+	acpidisp_array_search(bc->bc_level, bc->bc_level_count,
+	    acpidisp_fit_level_from_gpc(bc, val), &lo, &up);
+
+	if (lo == up) {
+		level = lo;
+	} else if (delta > 0) {
+		if (lo <= bc->bc_current)
+			level = up;
+		else if ((up - val) < (val - lo))
+			level = up;
+		else
+			level = lo;
+	} else {
+		if (up >= bc->bc_current)
+			level = lo;
+		else if ((val - lo) < (up - val))
+			level = lo;
+		else
+			level = up;
+	}
+
 	bc->bc_current = level;
 	error = acpidisp_set_brightness(osc, bc->bc_current);
 	mutex_exit(osc->sc_mtx);
