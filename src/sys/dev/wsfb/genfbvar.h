@@ -1,4 +1,4 @@
-/*	$NetBSD: genfbvar.h,v 1.17 2010/10/07 07:53:53 macallan Exp $ */
+/*	$NetBSD: genfbvar.h,v 1.21 2011/07/13 22:47:29 macallan Exp $ */
 
 /*-
  * Copyright (c) 2007 Michael Lorenz
@@ -27,7 +27,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: genfbvar.h,v 1.17 2010/10/07 07:53:53 macallan Exp $");
+__KERNEL_RCSID(0, "$NetBSD: genfbvar.h,v 1.21 2011/07/13 22:47:29 macallan Exp $");
 
 #ifndef GENFBVAR_H
 #define GENFBVAR_H
@@ -51,9 +51,9 @@ __KERNEL_RCSID(0, "$NetBSD: genfbvar.h,v 1.17 2010/10/07 07:53:53 macallan Exp $
 #ifdef SPLASHSCREEN
 #define GENFB_DISABLE_TEXT
 #include <dev/splash/splash.h>
-/* XXX */
-extern const char _splash_header_data_cmap[64+32][3];
 #endif
+
+struct genfb_softc;
 
 struct genfb_ops {
 	int (*genfb_ioctl)(void *, void *, u_long, void *, int, struct lwp *);
@@ -66,15 +66,31 @@ struct genfb_colormap_callback {
 	void (*gcc_set_mapreg)(void *, int, int, int, int);
 };
 
-struct genfb_parameter_callback{
+/*
+ * Integer parameter provider.  Each callback shall return 0 on success,
+ * and an error(2) number on failure.  The gpc_upd_parameter callback is
+ * optional (i.e. it can be NULL).
+ *
+ * This structure is used for backlight and brightness control.  The
+ * expected parameter range is:
+ *
+ *	[0, 1]		for backlight
+ *	[0, 255]	for brightness
+ */
+struct genfb_parameter_callback {
 	void *gpc_cookie;
-	void (*gpc_set_parameter)(void *, int);
-	int (*gpc_get_parameter)(void *);
+	int (*gpc_get_parameter)(void *, int *);
+	int (*gpc_set_parameter)(void *, int);
+	int (*gpc_upd_parameter)(void *, int);
 };
 
 struct genfb_pmf_callback {
 	bool (*gpc_suspend)(device_t, const pmf_qual_t *);
 	bool (*gpc_resume)(device_t, const pmf_qual_t *);
+};
+
+struct genfb_mode_callback {
+	bool (*gmc_setmode)(struct genfb_softc *, int);
 };
 
 struct genfb_softc {
@@ -88,6 +104,8 @@ struct genfb_softc {
 	struct genfb_colormap_callback *sc_cmcb;
 	struct genfb_pmf_callback *sc_pmfcb;
 	struct genfb_parameter_callback *sc_backlight;
+	struct genfb_parameter_callback *sc_brightness;
+	struct genfb_mode_callback *sc_modecb;
 	int sc_backlight_level, sc_backlight_on;
 	void *sc_fbaddr;	/* kva */
 #ifdef GENFB_SHADOWFB
@@ -103,10 +121,8 @@ struct genfb_softc {
 	bool sc_want_clear;
 #ifdef SPLASHSCREEN
 	struct splash_info sc_splash;
-#ifdef SPLASHSCREEN_PROGRESS
-	struct splash_progress sc_progress;
 #endif
-#endif
+	struct wsdisplay_accessops sc_accessops;
 };
 
 void	genfb_cnattach(void);
@@ -117,6 +133,7 @@ void	genfb_init(struct genfb_softc *);
 int	genfb_attach(struct genfb_softc *, struct genfb_ops *);
 int	genfb_borrow(bus_addr_t, bus_space_handle_t *);
 void	genfb_restore_palette(struct genfb_softc *);
-
+void	genfb_enable_polling(device_t);
+void	genfb_disable_polling(device_t);
 
 #endif /* GENFBVAR_H */
