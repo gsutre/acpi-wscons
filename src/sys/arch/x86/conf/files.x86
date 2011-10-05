@@ -93,6 +93,10 @@ file	arch/x86/x86/acpi_machdep.c	acpi
 file	arch/x86/acpi/acpi_wakeup.c	acpi
 file	arch/x86/acpi/acpi_cpu_md.c	acpi & acpicpu
 
+# XXX Work in progress
+file	arch/x86/acpi/acpi_display_md.c	acpi
+
+
 file	arch/x86/isa/isa_machdep.c	isa
 
 # Powernow common functions

@@ -66,10 +66,22 @@ struct genfb_colormap_callback {
 	void (*gcc_set_mapreg)(void *, int, int, int, int);
 };
 
-struct genfb_parameter_callback{
+/*
+ * Integer parameter provider.  Each callback shall return 0 on success,
+ * and an error(2) number on failure.  The gpc_upd_parameter callback is
+ * optional (i.e. it can be NULL).
+ *
+ * This structure is used for backlight and brightness control.  The
+ * expected parameter range is:
+ *
+ *	[0, 1]		for backlight
+ *	[0, 255]	for brightness
+ */
+struct genfb_parameter_callback {
 	void *gpc_cookie;
-	void (*gpc_set_parameter)(void *, int);
-	int (*gpc_get_parameter)(void *);
+	int (*gpc_get_parameter)(void *, int *);
+	int (*gpc_set_parameter)(void *, int);
+	int (*gpc_upd_parameter)(void *, int);
 };
 
 struct genfb_pmf_callback {
@@ -88,7 +100,7 @@ struct genfb_softc {
 	struct genfb_colormap_callback *sc_cmcb;
 	struct genfb_pmf_callback *sc_pmfcb;
 	struct genfb_parameter_callback *sc_backlight;
-	int sc_backlight_level, sc_backlight_on;
+	struct genfb_parameter_callback *sc_brightness;
 	void *sc_fbaddr;	/* kva */
 #ifdef GENFB_SHADOWFB
 	void *sc_shadowfb;

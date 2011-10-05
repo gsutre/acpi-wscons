@@ -52,6 +52,7 @@ __KERNEL_RCSID(0, "$NetBSD: x86_autoconf.c,v 1.52 2010/08/21 17:27:20 jmcneill E
 
 #include <machine/bootinfo.h>
 #include <machine/pio.h>
+#include <machine/acpi_display_md.h>
 
 #include "acpica.h"
 #include "pci.h"
@@ -574,6 +575,7 @@ device_register(device_t dev, void *aux)
 {
 #if NPCI > 0
 	static bool found_console = false;
+	struct pci_attach_args *paa = aux;
 #endif
 
 	/*
@@ -607,7 +609,6 @@ device_register(device_t dev, void *aux)
 #if NPCI > 0
 		if (bin->bus == BI_BUS_PCI &&
 		    device_is_a(device_parent(dev), "pci")) {
-			struct pci_attach_args *paa = aux;
 			int b, d, f;
 
 			/*
@@ -638,6 +639,10 @@ device_register(device_t dev, void *aux)
 		struct btinfo_framebuffer *fbinfo;
 		struct pci_attach_args *pa = aux;
 		prop_dictionary_t dict;
+#if NACPICA > 0
+		struct genfb_parameter_callback *gpc;
+		int b, d, f;
+#endif
 
 		if (PCI_CLASS(pa->pa_class) == PCI_CLASS_DISPLAY) {
 #if NWSDISPLAY > 0 && NGENFB > 0
@@ -691,6 +696,14 @@ device_register(device_t dev, void *aux)
 			pmf_cb.gpc_resume = x86_genfb_resume;
 			prop_dictionary_set_uint64(dict,
 			    "pmf_callback", (uint64_t)&pmf_cb);
+#if NACPICA > 0
+			pci_decompose_tag(paa->pa_pc, paa->pa_tag, &b, &d, &f);
+			gpc = acpidisp_md_out_find(b, d, f);
+			aprint_debug("%s: gpc=0x%p\n", __func__, gpc);
+			if (gpc != NULL)
+				prop_dictionary_set_uint64(dict,
+				    "brightness_callback", (uint64_t)(vaddr_t)gpc);
+#endif
 #ifdef VGA_POST
 			vga_posth = vga_post_init(pa->pa_bus, pa->pa_device,
 			    pa->pa_function);
