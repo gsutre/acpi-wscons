@@ -1087,8 +1087,7 @@ acpidisp_out_zero_brightness_callback(void *arg)
 
 	if (bc == NULL) {
 		/* Fallback to pmf(9). */
-		/* XXX Is this the intended meaning of PMFE_DISPLAY_REDUCED? */
-		pmf_event_inject(NULL, PMFE_DISPLAY_REDUCED);
+		pmf_event_inject(NULL, PMFE_DISPLAY_BRIGHTNESS_ZERO);
 		return;
 	}
 

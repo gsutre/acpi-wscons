@@ -77,6 +77,7 @@ static int 	genfb_putpalreg(struct genfb_softc *, uint8_t, uint8_t,
 
 static void	genfb_brightness_up(device_t);
 static void	genfb_brightness_down(device_t);
+static void	genfb_brightness_zero(device_t);
 
 extern const u_char rasops_cmap[768];
 
@@ -183,6 +184,12 @@ genfb_init(struct genfb_softc *sc)
 				pmf_event_register(sc->sc_dev,
 				    PMFE_DISPLAY_BRIGHTNESS_DOWN,
 				    genfb_brightness_down, TRUE);
+			}
+			if (console &&
+			    sc->sc_brightness->gpc_set_parameter != NULL) {
+				pmf_event_register(sc->sc_dev,
+				    PMFE_DISPLAY_BRIGHTNESS_ZERO,
+				    genfb_brightness_zero, TRUE);
 			}
 		}
 	}
@@ -666,6 +673,18 @@ genfb_brightness_down(device_t dev)
 
 	(void)sc->sc_brightness->gpc_upd_parameter(
 	    sc->sc_brightness->gpc_cookie, - GENFB_BRIGHTNESS_STEP);
+}
+
+static void
+genfb_brightness_zero(device_t dev)
+{
+	struct genfb_softc *sc = device_private(dev);
+
+	KASSERT(sc->sc_brightness != NULL &&
+		sc->sc_brightness->gpc_set_parameter != NULL);
+
+	(void)sc->sc_brightness->gpc_set_parameter(
+	    sc->sc_brightness->gpc_cookie, 0);
 }
 
 void
