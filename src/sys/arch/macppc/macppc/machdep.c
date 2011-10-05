@@ -1,4 +1,4 @@
-/*	$NetBSD: machdep.c,v 1.154 2010/10/06 02:27:25 macallan Exp $	*/
+/*	$NetBSD: machdep.c,v 1.162 2011/07/28 15:29:52 macallan Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996 Wolfgang Solfrank.
@@ -32,7 +32,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.154 2010/10/06 02:27:25 macallan Exp $");
+__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.162 2011/07/28 15:29:52 macallan Exp $");
 
 #include "opt_compat_netbsd.h"
 #include "opt_ddb.h"
@@ -45,7 +45,13 @@ __KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.154 2010/10/06 02:27:25 macallan Exp $
 
 #include <sys/param.h>
 #include <sys/buf.h>
+#include <sys/boot_flag.h>
+#include <sys/bus.h>
+#include <sys/conf.h>
+#include <sys/device.h>
 #include <sys/exec.h>
+#include <sys/kernel.h>
+#include <sys/ksyms.h>
 #include <sys/malloc.h>
 #include <sys/mbuf.h>
 #include <sys/mount.h>
@@ -55,18 +61,9 @@ __KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.154 2010/10/06 02:27:25 macallan Exp $
 #include <sys/syscallargs.h>
 #include <sys/syslog.h>
 #include <sys/systm.h>
-#include <sys/kernel.h>
-#include <sys/boot_flag.h>
-#include <sys/ksyms.h>
-#include <sys/conf.h>
-#include <sys/device.h>
-
-#include <uvm/uvm_extern.h>
-
-#include <net/netisr.h>
 
 #ifdef DDB
-#include <machine/db_machdep.h>
+#include <powerpc/db_machdep.h>
 #include <ddb/db_extern.h>
 #endif
 
@@ -83,9 +80,9 @@ __KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.154 2010/10/06 02:27:25 macallan Exp $
 
 #include <machine/autoconf.h>
 #include <machine/powerpc.h>
-#include <machine/trap.h>
-#include <machine/bus.h>
-#include <machine/fpu.h>
+
+#include <powerpc/trap.h>
+#include <powerpc/fpu.h>
 #include <powerpc/oea/bat.h>
 #include <powerpc/spr.h>
 #ifdef ALTIVEC
@@ -93,28 +90,31 @@ __KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.154 2010/10/06 02:27:25 macallan Exp $
 #endif
 #include <powerpc/ofw_cons.h>
 
-#include <arch/powerpc/pic/picvar.h>
+#include <powerpc/pic/picvar.h>
+#ifdef MULTIPROCESSOR
+#include <powerpc/pic/ipivar.h>
+#endif
+
 #include <macppc/dev/adbvar.h>
 #include <macppc/dev/pmuvar.h>
 #include <macppc/dev/cudavar.h>
+
+#include <macppc/macppc/static_edid.h>
 
 #include "ksyms.h"
 #include "pmu.h"
 #include "cuda.h"
 
-#ifdef MULTIPROCESSOR
-#include <arch/powerpc/pic/ipivar.h>
-#endif
-
 struct genfb_colormap_callback gfb_cb;
 struct genfb_parameter_callback gpc_backlight, gpc_brightness;
 
 /*
- * XXX	Hotkeys work only after brightness_level is set by of_set_brightness().
- *	See also comment in of_get_brightness().
+ * OpenFirmware gives us no way to check the brightness level or the backlight
+ * state so we assume the backlight is on and about 4/5 up which seems 
+ * reasonable for most laptops
  */
-int backlight_state = -1;
-int brightness_level = -1;
+int backlight_state = 1;
+int brightness_level = 200;
 
 static void of_set_palette(void *, int, int, int, int);
 static void add_model_specifics(prop_dictionary_t);
@@ -186,7 +186,7 @@ cpu_reboot(int howto, char *what)
 
 #ifdef MULTIPROCESSOR
 	/* Halt other CPU */
-	ppc_send_ipi(IPI_T_NOTME, PPC_IPI_HALT);
+	cpu_send_ipi(IPI_DST_NOTME, IPI_HALT);
 	delay(100000);	/* XXX */
 #endif
 
@@ -268,7 +268,7 @@ callback(void *p)
 #endif
 
 void
-copy_disp_props(struct device *dev, int node, prop_dictionary_t dict)
+copy_disp_props(device_t dev, int node, prop_dictionary_t dict)
 {
 	uint32_t temp;
 	uint64_t cmap_cb, backlight_cb, brightness_cb;
@@ -331,7 +331,7 @@ copy_disp_props(struct device *dev, int node, prop_dictionary_t dict)
 
 	gfb_cb.gcc_cookie = (void *)console_instance;
 	gfb_cb.gcc_set_mapreg = of_set_palette;
-	cmap_cb = (uint64_t)&gfb_cb;
+	cmap_cb = (uint64_t)(uintptr_t)&gfb_cb;
 	prop_dictionary_set_uint64(dict, "cmap_callback", cmap_cb);
 
 	/* not let's look for backlight control */
@@ -347,7 +347,7 @@ copy_disp_props(struct device *dev, int node, prop_dictionary_t dict)
 		gpc_backlight.gpc_set_parameter = of_set_backlight;
 		gpc_backlight.gpc_get_parameter = of_get_backlight;
 		gpc_backlight.gpc_upd_parameter = NULL;
-		backlight_cb = (uint64_t)&gpc_backlight;
+		backlight_cb = (uint64_t)(uintptr_t)&gpc_backlight;
 		prop_dictionary_set_uint64(dict, "backlight_callback",
 		    backlight_cb);
 
@@ -355,7 +355,7 @@ copy_disp_props(struct device *dev, int node, prop_dictionary_t dict)
 		gpc_brightness.gpc_set_parameter = of_set_brightness;
 		gpc_brightness.gpc_get_parameter = of_get_brightness;
 		gpc_brightness.gpc_upd_parameter = of_upd_brightness;
-		brightness_cb = (uint64_t)&gpc_brightness;
+		brightness_cb = (uint64_t)(uintptr_t)&gpc_brightness;
 		prop_dictionary_set_uint64(dict, "brightness_callback",
 		    brightness_cb);
 	}
@@ -366,12 +366,21 @@ add_model_specifics(prop_dictionary_t dict)
 {
 	const char *bl_rev_models[] = {
 		"PowerBook4,3", "PowerBook6,3", "PowerBook6,5", NULL};
+	const char *pismo[] = {
+		"PowerBook3,1", NULL};
 	int node;
 
 	node = OF_finddevice("/");
 
 	if (of_compatible(node, bl_rev_models) != -1) {
 		prop_dictionary_set_bool(dict, "backlight_level_reverted", 1);
+	}
+	if (of_compatible(node, pismo) != -1) {
+		prop_data_t edid;
+
+		edid = prop_data_create_data(edid_pismo, sizeof(edid_pismo));
+		prop_dictionary_set(dict, "EDID", edid);
+		prop_object_release(edid);
 	}
 }
 
