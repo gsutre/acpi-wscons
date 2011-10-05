@@ -703,6 +703,7 @@ acpidisp_out_detach(device_t self, int flags)
 	acpi_deregister_notify(osc->sc_node);
 
 	if (bc != NULL) {
+		(void)acpidisp_md_out_deregister(self);
 		kmem_free(bc->bc_level,
 		    bc->bc_level_count * sizeof(*bc->bc_level));
 		kmem_free(bc, sizeof(*bc));
